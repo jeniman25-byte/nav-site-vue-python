@@ -81,8 +81,36 @@ npm run dev
 - `DEFAULT_ADMIN_USERNAME`
 - `DEFAULT_ADMIN_PASSWORD`
 
+## Docker 部署（本地，端口 50100）
+
+在项目根目录执行：
+
+```bash
+docker compose up -d --build
+```
+
+访问地址：`http://127.0.0.1:50100`
+
+常用命令：
+
+```bash
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 停止并删除容器
+docker compose down
+
+# 停止并删除容器+数据卷（会清空 SQLite 数据）
+docker compose down -v
+```
+
+> 默认管理员账号依旧是 `admin / ChangeMe123!`。
+
 ## 说明
 
 - 密码使用 `passlib` 哈希存储，不会明文落库。
-- SQLite 数据库文件默认为 `backend/nav_site.db`。
+- Docker 模式下 SQLite 数据文件默认在卷 `nav_site_data` 中（容器内路径 `/app/data/nav_site.db`）。
 - 首次启动会自动建表并播种默认管理员与示例导航数据。
