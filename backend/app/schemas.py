@@ -37,3 +37,15 @@ class NavCategoryResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class AdminCategoryCreateRequest(BaseModel):
+    name: str
+    is_private: bool
+
+
+class AdminNavItemCreateRequest(BaseModel):
+    title: str
+    url: str
+    description: str | None = None
+    sort_order: int = 0
+    category_id: int

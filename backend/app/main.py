@@ -4,10 +4,18 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from .auth import authenticate_user, create_access_token, get_current_user
+from .auth import authenticate_user, create_access_token, get_admin_user, get_current_user
 from .config import get_settings
 from .database import get_db
-from .schemas import LoginRequest, NavCategoryResponse, TokenResponse, UserResponse
+from .models import NavCategory, NavItem
+from .schemas import (
+    AdminCategoryCreateRequest,
+    AdminNavItemCreateRequest,
+    LoginRequest,
+    NavCategoryResponse,
+    TokenResponse,
+    UserResponse,
+)
 from .seed import fetch_categories, init_database
 
 
@@ -56,3 +64,54 @@ def get_public_navigation(db: Session = Depends(get_db)):
 def get_private_navigation(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return fetch_categories(db, is_private=True)
 
+
+@app.get("/api/admin/categories", response_model=list[NavCategoryResponse])
+def list_admin_categories(db: Session = Depends(get_db), current_user=Depends(get_admin_user)):
+    del current_user
+    categories = db.query(NavCategory).order_by(NavCategory.is_private.asc(), NavCategory.name.asc()).all()
+    for category in categories:
+        category.items.sort(key=lambda item: (item.sort_order, item.id))
+    return categories
+
+
+@app.post("/api/admin/categories", response_model=NavCategoryResponse, status_code=status.HTTP_201_CREATED)
+def create_admin_category(
+    payload: AdminCategoryCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_admin_user),
+):
+    del current_user
+    exists = db.query(NavCategory).filter(NavCategory.name == payload.name).first()
+    if exists:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category name already exists")
+
+    category = NavCategory(name=payload.name, is_private=payload.is_private)
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+    return category
+
+
+@app.post("/api/admin/nav-items", response_model=NavCategoryResponse, status_code=status.HTTP_201_CREATED)
+def create_admin_nav_item(
+    payload: AdminNavItemCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_admin_user),
+):
+    del current_user
+    category = db.query(NavCategory).filter(NavCategory.id == payload.category_id).first()
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    item = NavItem(
+        title=payload.title,
+        url=payload.url,
+        description=payload.description,
+        sort_order=payload.sort_order,
+        category_id=payload.category_id,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(category)
+    category.items.sort(key=lambda nav_item: (nav_item.sort_order, nav_item.id))
+    return category

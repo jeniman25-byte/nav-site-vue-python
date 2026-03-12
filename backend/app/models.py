@@ -21,7 +21,12 @@ class NavCategory(Base):
     name = Column(String(100), nullable=False, unique=True)
     is_private = Column(Boolean, default=False, nullable=False)
 
-    items = relationship("NavItem", back_populates="category", cascade="all, delete-orphan")
+    items = relationship(
+        "NavItem",
+        back_populates="category",
+        cascade="all, delete-orphan",
+        order_by="NavItem.sort_order",
+    )
 
 
 class NavItem(Base):
@@ -35,4 +40,3 @@ class NavItem(Base):
     category_id = Column(Integer, ForeignKey("nav_categories.id"), nullable=False)
 
     category = relationship("NavCategory", back_populates="items")
-
