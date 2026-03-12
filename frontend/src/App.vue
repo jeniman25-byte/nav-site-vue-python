@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
-import HeroBanners from "./components/HeroBanners.vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import SidebarNav from "./components/SidebarNav.vue";
 import ToolGridSection from "./components/ToolGridSection.vue";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+const HOME_PATH = "/";
+const ADMIN_PATH = "/admin";
 
 const token = ref(localStorage.getItem("access_token") || "");
 const currentUser = ref(null);
@@ -21,7 +22,8 @@ const adminMessage = ref("");
 const sidebarOpen = ref(false);
 const activeSection = ref("public-overview");
 const showLoginModal = ref(false);
-const adminPanelOpen = ref(false);
+const searchQuery = ref("");
+const currentPath = ref(window.location.pathname || HOME_PATH);
 const loginForm = ref({
   username: "admin",
   password: "ChangeMe123!",
@@ -38,86 +40,75 @@ const itemForm = ref({
   category_id: "",
 });
 
-const heroBanners = [
-  { title: "每日快讯", subtitle: "发现今天值得关注的新工具与新栏目", tone: "blue" },
-  { title: "免费社群", subtitle: "整理可直接加入的公开频道与交流入口", tone: "green" },
-  { title: "最新项目", subtitle: "持续补充高质量新站点，优先展示中文资源", tone: "lavender" },
-  { title: "热门教程", subtitle: "把常用工作流、提示词与上手文档放在前排", tone: "cyan" },
-];
-
-const promoStrips = [
-  "精选合集：面向中文用户的导航首页改版，突出分类浏览与快速到达。",
-  "管理员登录后可直接录入公共或私有导航，首页分组会立即同步刷新。",
-];
-
 const isLoggedIn = computed(() => Boolean(token.value));
 const isAdmin = computed(() => Boolean(currentUser.value?.is_admin));
+const isAdminRoute = computed(() => currentPath.value === ADMIN_PATH);
+const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
-const publicSection = computed(() => ({
-  id: "public-overview",
-  title: "公共导航",
-  badge: "全部可见",
-  description: "无需登录即可访问的公开站点与工具集合。",
-  categories: publicCategories.value,
-}));
+const filteredPublicCategories = computed(() => filterCategories(publicCategories.value, normalizedQuery.value));
+const filteredPrivateCategories = computed(() => {
+  if (!isLoggedIn.value) {
+    return [];
+  }
+  return filterCategories(privateCategories.value, normalizedQuery.value);
+});
 
-const privateSection = computed(() => ({
-  id: "private-overview",
-  title: "私有导航",
-  badge: isLoggedIn.value ? "已解锁" : "登录后可见",
-  description: isLoggedIn.value
-    ? "已登录账号可见的内部资源、协作平台与运维工具。"
-    : "当前隐藏具体内容，登录后会展示完整分类与站点卡片。",
-  categories: privateCategories.value,
-}));
-
-const groupedAdminCategories = computed(() => ({
-  public: adminCategories.value.filter((category) => !category.is_private),
-  private: adminCategories.value.filter((category) => category.is_private),
-}));
+const hasVisibleResults = computed(() => {
+  if (!normalizedQuery.value) {
+    return true;
+  }
+  return filteredPublicCategories.value.length > 0 || filteredPrivateCategories.value.length > 0;
+});
 
 const sidebarGroups = computed(() => {
-  const publicLinks = publicCategories.value.map((category) => ({
+  if (isAdminRoute.value) {
+    return [
+      {
+        title: "管理页面",
+        links: [
+          { id: "admin-overview", label: "分类列表", meta: `${adminCategories.value.length} 个分类` },
+          { id: "admin-create-category", label: "新增分类", meta: "名称 + 私有属性" },
+          { id: "admin-create-item", label: "新增导航项", meta: "录入标题 / URL / 描述 / 排序" },
+        ],
+      },
+    ];
+  }
+
+  const publicLinks = filteredPublicCategories.value.map((category) => ({
     id: createCategoryId("public", category.name),
     label: category.name,
     meta: `${category.items.length} 个站点`,
   }));
 
-  const privateLinks = isLoggedIn.value
-    ? privateCategories.value.map((category) => ({
-        id: createCategoryId("private", category.name),
-        label: category.name,
-        meta: `${category.items.length} 个站点`,
-      }))
-    : [];
+  const privateLinks = filteredPrivateCategories.value.map((category) => ({
+    id: createCategoryId("private", category.name),
+    label: category.name,
+    meta: `${category.items.length} 个站点`,
+  }));
 
-  const groups = [
+  return [
     {
       title: "公共分组",
-      links: [{ id: "public-overview", label: "公共导航总览", meta: "无需登录" }, ...publicLinks],
+      links: [{ id: "public-overview", label: "公共导航", meta: "无需登录" }, ...publicLinks],
     },
     {
       title: "私有分组",
       links: [
         {
           id: "private-overview",
-          label: "私有导航总览",
-          meta: isLoggedIn.value ? "已解锁" : "需登录",
+          label: "私有导航",
+          meta: isLoggedIn.value ? "已解锁" : "登录后可见",
         },
         ...privateLinks,
       ],
     },
   ];
-
-  if (isAdmin.value) {
-    groups.push({
-      title: "管理",
-      links: [{ id: "admin-console", label: "管理后台", meta: "分类与导航录入" }],
-    });
-  }
-
-  return groups;
 });
+
+const groupedAdminCategories = computed(() => ({
+  public: adminCategories.value.filter((category) => !category.is_private),
+  private: adminCategories.value.filter((category) => category.is_private),
+}));
 
 async function apiRequest(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -135,6 +126,27 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
+function filterCategories(categories, query) {
+  if (!query) {
+    return categories;
+  }
+
+  return categories
+    .map((category) => {
+      const categoryMatch = category.name.toLowerCase().includes(query);
+      const items = categoryMatch
+        ? category.items
+        : category.items.filter((item) => {
+            const title = item.title?.toLowerCase() || "";
+            const description = item.description?.toLowerCase() || "";
+            return title.includes(query) || description.includes(query);
+          });
+
+      return { ...category, items };
+    })
+    .filter((category) => category.items.length > 0);
+}
+
 function createCategoryId(scope, name) {
   return `${scope}-${name}`
     .toLowerCase()
@@ -142,14 +154,25 @@ function createCategoryId(scope, name) {
     .replace(/^-+|-+$/g, "");
 }
 
+function syncPath() {
+  currentPath.value = window.location.pathname || HOME_PATH;
+  sidebarOpen.value = false;
+  activeSection.value = isAdminRoute.value ? "admin-overview" : "public-overview";
+}
+
+function navigateTo(path) {
+  if (window.location.pathname === path) {
+    return;
+  }
+  window.history.pushState({}, "", path);
+  syncPath();
+}
+
 function updateActiveSection(id) {
   activeSection.value = id;
 }
 
 function scrollToSection(id) {
-  if (id === "admin-console") {
-    adminPanelOpen.value = true;
-  }
   activeSection.value = id;
   sidebarOpen.value = false;
   requestAnimationFrame(() => {
@@ -158,6 +181,13 @@ function scrollToSection(id) {
       element.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
+}
+
+function handleSidebarNavigate(id) {
+  if (isAdminRoute.value && currentPath.value !== ADMIN_PATH) {
+    navigateTo(ADMIN_PATH);
+  }
+  scrollToSection(id);
 }
 
 function openLoginModal() {
@@ -202,7 +232,6 @@ async function loadAdminCategories() {
   }
 
   adminLoading.value = true;
-
   try {
     adminCategories.value = await apiRequest("/admin/categories");
     if (!itemForm.value.category_id && adminCategories.value.length > 0) {
@@ -241,7 +270,6 @@ async function refreshData() {
       currentUser.value = null;
       privateCategories.value = [];
       adminCategories.value = [];
-      adminPanelOpen.value = false;
     }
   } catch (error) {
     errorMessage.value = error.message;
@@ -275,10 +303,13 @@ function logout() {
   currentUser.value = null;
   privateCategories.value = [];
   adminCategories.value = [];
-  adminPanelOpen.value = false;
   showLoginModal.value = false;
   localStorage.removeItem("access_token");
-  activeSection.value = "public-overview";
+  if (isAdminRoute.value) {
+    navigateTo(HOME_PATH);
+  } else {
+    activeSection.value = "public-overview";
+  }
 }
 
 async function submitCategory() {
@@ -337,8 +368,14 @@ async function submitNavItem() {
 }
 
 onMounted(async () => {
+  syncPath();
+  window.addEventListener("popstate", syncPath);
   await refreshData();
   resetAdminForms();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("popstate", syncPath);
 });
 </script>
 
@@ -350,112 +387,210 @@ onMounted(async () => {
         :active-section="activeSection"
         :is-logged-in="isLoggedIn"
         :current-user="currentUser"
-        @navigate="scrollToSection"
+        @navigate="handleSidebarNavigate"
         @close="sidebarOpen = false"
       />
     </aside>
 
     <div class="content-column">
       <header class="topbar">
-        <div class="topbar-left">
-          <button class="sidebar-toggle" type="button" @click="sidebarOpen = !sidebarOpen">
-            {{ sidebarOpen ? "收起分类" : "展开分类" }}
-          </button>
-          <div class="topbar-copy">
-            <p class="topbar-label">中文导航站</p>
-            <h1>高频工具、教程与内部资源集中入口</h1>
-            <p>右上角统一处理登录与管理员入口，公共/私有导航与后台录入能力保持同一套 JWT 权限体系。</p>
+        <div class="topbar-main">
+          <div class="topbar-left">
+            <button class="sidebar-toggle" type="button" @click="sidebarOpen = !sidebarOpen">
+              {{ sidebarOpen ? "收起分类" : "展开分类" }}
+            </button>
+            <div class="topbar-copy compact">
+              <p class="topbar-label">中文导航站</p>
+              <h1>{{ isAdminRoute ? "后台管理" : "导航首页" }}</h1>
+            </div>
           </div>
-        </div>
 
-        <div class="topbar-actions">
-          <template v-if="isLoggedIn && currentUser">
+          <div class="topbar-actions">
             <button
               v-if="isAdmin"
               class="topbar-action ghost-button"
               type="button"
-              @click="scrollToSection('admin-console')"
+              @click="navigateTo(isAdminRoute ? HOME_PATH : ADMIN_PATH)"
             >
-              管理后台
+              {{ isAdminRoute ? "返回首页" : "后台管理" }}
             </button>
-            <div class="account-chip">
-              <div class="account-avatar small">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
-              <div>
-                <strong>{{ currentUser.username }}</strong>
-                <p>{{ currentUser.is_admin ? "管理员" : "普通用户" }}</p>
+            <template v-if="isLoggedIn && currentUser">
+              <div class="account-chip">
+                <div class="account-avatar small">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
+                <div>
+                  <strong>{{ currentUser.username }}</strong>
+                  <p>{{ currentUser.is_admin ? "管理员" : "普通用户" }}</p>
+                </div>
               </div>
-            </div>
-            <button class="topbar-action logout-button" type="button" @click="logout">退出</button>
-          </template>
-          <button v-else class="topbar-action login-button" type="button" @click="openLoginModal">登录</button>
+              <button class="topbar-action logout-button" type="button" @click="logout">退出</button>
+            </template>
+            <button v-else class="topbar-action login-button" type="button" @click="openLoginModal">登录</button>
+          </div>
+        </div>
+
+        <div v-if="!isAdminRoute" class="search-row">
+          <label class="search-field">
+            <span>搜索导航</span>
+            <input
+              v-model="searchQuery"
+              type="search"
+              placeholder="按标题、描述或分类名实时搜索"
+            />
+          </label>
         </div>
       </header>
 
-      <main class="main-layout">
-        <section class="hero-panel">
-          <HeroBanners :banners="heroBanners" :promos="promoStrips" />
+      <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+      <p v-if="adminMessage" class="success-banner">{{ adminMessage }}</p>
 
-          <section class="auth-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="panel-kicker">账号状态</p>
-                <h2>{{ isLoggedIn && currentUser ? "登录状态正常" : "登录后解锁私有导航" }}</h2>
-              </div>
-              <span class="status-pill" :class="{ unlocked: isLoggedIn }">
-                {{ isLoggedIn ? "私有导航已开放" : "当前仅展示公共导航" }}
-              </span>
-            </div>
-
-            <template v-if="isLoggedIn && currentUser">
-              <div class="account-summary">
-                <div class="account-avatar">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
-                <div>
-                  <strong>{{ currentUser.username }}</strong>
-                  <p>{{ currentUser.is_admin ? "管理员账号，可录入导航" : "普通账号，可查看私有导航" }}</p>
-                </div>
-              </div>
-              <div class="quick-stats">
-                <div class="stat-card">
-                  <span>公共分类</span>
-                  <strong>{{ publicCategories.length }}</strong>
-                </div>
-                <div class="stat-card">
-                  <span>私有分类</span>
-                  <strong>{{ privateCategories.length }}</strong>
-                </div>
-              </div>
-              <p class="auth-note" v-if="isAdmin">右上角已显示“管理后台”入口，可新增分类和导航项。</p>
-            </template>
-
-            <template v-else>
-              <div class="auth-callout">
-                <p>登录按钮已移到页面右上角，点击后会以弹窗方式完成账号密码登录。</p>
-                <button type="button" class="login-button inline-login" @click="openLoginModal">打开登录弹窗</button>
-              </div>
-            </template>
-          </section>
+      <main v-if="!isAdminRoute" class="main-layout">
+        <section
+          id="public-overview"
+          class="overview-card"
+          @mouseenter="updateActiveSection('public-overview')"
+        >
+          <div>
+            <p class="section-kicker">Public Navigation</p>
+            <h2>公共导航</h2>
+            <p>保留分类浏览和卡片网格，支持顶部实时搜索。</p>
+          </div>
+          <span class="overview-badge">{{ filteredPublicCategories.length }} 个分类</span>
         </section>
 
-        <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
-        <p v-if="adminMessage" class="success-banner">{{ adminMessage }}</p>
-
         <section
-          v-if="isAdmin && adminPanelOpen"
-          id="admin-console"
-          class="admin-panel"
-          @mouseenter="updateActiveSection('admin-console')"
+          v-if="isLoggedIn"
+          id="private-overview"
+          class="overview-card private-overview"
+          @mouseenter="updateActiveSection('private-overview')"
         >
-          <div class="admin-panel-header">
-            <div>
-              <p class="section-kicker">Admin Console</p>
-              <h2>后台录入导航</h2>
-              <p>管理员可新增公共/私有分类，并向分类中录入导航项。</p>
-            </div>
-            <span class="overview-badge">管理员专用</span>
+          <div>
+            <p class="section-kicker">Private Navigation</p>
+            <h2>私有导航</h2>
+            <p>已登录后会一起参与搜索过滤，并在首页同样以卡片方式展示。</p>
           </div>
+          <span class="overview-badge private-badge">{{ filteredPrivateCategories.length }} 个分类</span>
+        </section>
+
+        <section v-else id="private-overview" class="locked-panel" @mouseenter="updateActiveSection('private-overview')">
+          <div class="locked-copy">
+            <h3>登录后解锁私有导航</h3>
+            <p>右上角按钮继续使用弹窗登录，成功后会关闭弹窗并刷新数据。</p>
+          </div>
+          <button type="button" class="login-button" @click="openLoginModal">立即登录</button>
+        </section>
+
+        <div v-if="loading" class="empty-state">
+          <h3>正在加载导航数据</h3>
+          <p class="loading-copy">请稍候，公共导航和私有导航会在同一视图中刷新。</p>
+        </div>
+
+        <div v-else-if="!hasVisibleResults" class="empty-state">
+          <h3>没有找到匹配结果</h3>
+          <p>当前关键词会匹配分类名、导航标题和描述，试试更短的词或其他别名。</p>
+        </div>
+
+        <template v-else>
+          <ToolGridSection
+            v-for="category in filteredPublicCategories"
+            :id="createCategoryId('public', category.name)"
+            :key="`public-${category.id}`"
+            :title="category.name"
+            :items="category.items"
+            variant="public"
+            @focus-section="updateActiveSection"
+          />
+
+          <ToolGridSection
+            v-for="category in filteredPrivateCategories"
+            :id="createCategoryId('private', category.name)"
+            :key="`private-${category.id}`"
+            :title="category.name"
+            :items="category.items"
+            variant="private"
+            @focus-section="updateActiveSection"
+          />
+        </template>
+      </main>
+
+      <main v-else class="main-layout">
+        <template v-if="!isLoggedIn">
+          <section class="admin-empty-state">
+            <p class="section-kicker">Admin Access</p>
+            <h2>请先登录管理员账号</h2>
+            <p>后台管理已经独立到前端路由 `/admin`，未登录状态不会展示录入表单。</p>
+            <button type="button" class="topbar-action login-button" @click="openLoginModal">打开登录弹窗</button>
+          </section>
+        </template>
+
+        <template v-else-if="!isAdmin">
+          <section class="admin-empty-state">
+            <p class="section-kicker">403 Forbidden</p>
+            <h2>当前账号没有后台权限</h2>
+            <p>后端管理员接口已要求管理员身份，非管理员访问会返回 403。</p>
+            <button type="button" class="topbar-action ghost-button" @click="navigateTo(HOME_PATH)">返回首页</button>
+          </section>
+        </template>
+
+        <template v-else>
+          <section
+            id="admin-overview"
+            class="admin-panel"
+            @mouseenter="updateActiveSection('admin-overview')"
+          >
+            <div class="admin-panel-header">
+              <div>
+                <p class="section-kicker">Admin Console</p>
+                <h2>分类列表</h2>
+                <p>管理员录入已从首页迁出，首页只保留浏览和搜索。</p>
+              </div>
+              <span class="overview-badge">管理员专用</span>
+            </div>
+
+            <div v-if="adminLoading" class="empty-state admin-inline-state">
+              <h3>正在加载分类</h3>
+              <p class="loading-copy">管理员分类列表稍后会显示在这里。</p>
+            </div>
+            <div v-else class="admin-lists">
+              <section class="admin-card">
+                <div class="section-heading compact">
+                  <div>
+                    <p class="section-kicker">Public Categories</p>
+                    <h3>公共分类</h3>
+                  </div>
+                  <span class="section-count">{{ groupedAdminCategories.public.length }}</span>
+                </div>
+                <ul class="category-list">
+                  <li v-for="category in groupedAdminCategories.public" :key="category.id">
+                    <strong>{{ category.name }}</strong>
+                    <span>{{ category.items.length }} 个导航项</span>
+                  </li>
+                </ul>
+              </section>
+
+              <section class="admin-card">
+                <div class="section-heading compact">
+                  <div>
+                    <p class="section-kicker">Private Categories</p>
+                    <h3>私有分类</h3>
+                  </div>
+                  <span class="section-count">{{ groupedAdminCategories.private.length }}</span>
+                </div>
+                <ul class="category-list">
+                  <li v-for="category in groupedAdminCategories.private" :key="category.id">
+                    <strong>{{ category.name }}</strong>
+                    <span>{{ category.items.length }} 个导航项</span>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </section>
 
           <div class="admin-grid">
-            <section class="admin-card">
+            <section
+              id="admin-create-category"
+              class="admin-card"
+              @mouseenter="updateActiveSection('admin-create-category')"
+            >
               <div class="section-heading compact">
                 <div>
                   <p class="section-kicker">Create Category</p>
@@ -480,7 +615,11 @@ onMounted(async () => {
               </form>
             </section>
 
-            <section class="admin-card">
+            <section
+              id="admin-create-item"
+              class="admin-card"
+              @mouseenter="updateActiveSection('admin-create-item')"
+            >
               <div class="section-heading compact">
                 <div>
                   <p class="section-kicker">Create Nav Item</p>
@@ -488,6 +627,15 @@ onMounted(async () => {
                 </div>
               </div>
               <form class="admin-form" @submit.prevent="submitNavItem">
+                <label>
+                  所属分类
+                  <select v-model="itemForm.category_id" required>
+                    <option disabled value="">请选择分类</option>
+                    <option v-for="category in adminCategories" :key="category.id" :value="category.id">
+                      {{ category.name }} / {{ category.is_private ? "私有" : "公共" }}
+                    </option>
+                  </select>
+                </label>
                 <label>
                   标题
                   <input v-model="itemForm.title" required placeholder="例如：Figma" />
@@ -504,143 +652,40 @@ onMounted(async () => {
                   排序
                   <input v-model="itemForm.sort_order" type="number" min="0" />
                 </label>
-                <label>
-                  所属分类
-                  <select v-model="itemForm.category_id" required>
-                    <option disabled value="">请选择分类</option>
-                    <option v-for="category in adminCategories" :key="category.id" :value="category.id">
-                      {{ category.name }} / {{ category.is_private ? "私有" : "公共" }}
-                    </option>
-                  </select>
-                </label>
                 <button type="submit" :disabled="itemSubmitting || adminCategories.length === 0">
                   {{ itemSubmitting ? "提交中..." : "新增导航项" }}
                 </button>
               </form>
             </section>
           </div>
-
-          <div class="admin-lists">
-            <section class="admin-card">
-              <div class="section-heading compact">
-                <div>
-                  <p class="section-kicker">Public Categories</p>
-                  <h3>公共分类列表</h3>
-                </div>
-                <span class="section-count">{{ groupedAdminCategories.public.length }} 个分类</span>
-              </div>
-              <p v-if="adminLoading">正在读取分类...</p>
-              <ul v-else class="category-list">
-                <li v-for="category in groupedAdminCategories.public" :key="`admin-public-${category.id}`">
-                  <strong>{{ category.name }}</strong>
-                  <span>{{ category.items.length }} 个导航项</span>
-                </li>
-              </ul>
-            </section>
-
-            <section class="admin-card">
-              <div class="section-heading compact">
-                <div>
-                  <p class="section-kicker">Private Categories</p>
-                  <h3>私有分类列表</h3>
-                </div>
-                <span class="section-count">{{ groupedAdminCategories.private.length }} 个分类</span>
-              </div>
-              <p v-if="adminLoading">正在读取分类...</p>
-              <ul v-else class="category-list">
-                <li v-for="category in groupedAdminCategories.private" :key="`admin-private-${category.id}`">
-                  <strong>{{ category.name }}</strong>
-                  <span>{{ category.items.length }} 个导航项</span>
-                </li>
-              </ul>
-            </section>
-          </div>
-        </section>
-
-        <section
-          :id="publicSection.id"
-          class="overview-card"
-          @mouseenter="updateActiveSection(publicSection.id)"
-        >
-          <div>
-            <p class="section-kicker">Public</p>
-            <h2>{{ publicSection.title }}</h2>
-            <p>{{ publicSection.description }}</p>
-          </div>
-          <span class="overview-badge">{{ publicSection.badge }}</span>
-        </section>
-
-        <p v-if="loading" class="loading-copy">正在加载导航数据...</p>
-        <template v-else>
-          <ToolGridSection
-            v-for="category in publicSection.categories"
-            :id="createCategoryId('public', category.name)"
-            :key="`public-${category.id}`"
-            :title="category.name"
-            :items="category.items"
-            variant="public"
-            @focus-section="updateActiveSection"
-          />
-
-          <section
-            :id="privateSection.id"
-            class="overview-card private-overview"
-            @mouseenter="updateActiveSection(privateSection.id)"
-          >
-            <div>
-              <p class="section-kicker">Private</p>
-              <h2>{{ privateSection.title }}</h2>
-              <p>{{ privateSection.description }}</p>
-            </div>
-            <span class="overview-badge private-badge">{{ privateSection.badge }}</span>
-          </section>
-
-          <div v-if="!isLoggedIn" class="locked-panel">
-            <div class="locked-copy">
-              <h3>私有导航暂未解锁</h3>
-              <p>右上角登录后显示完整分类目录和工具卡片，公共与私有分区仍然独立展示。</p>
-            </div>
-            <button type="button" @click="openLoginModal">立即登录</button>
-          </div>
-
-          <template v-else>
-            <ToolGridSection
-              v-for="category in privateSection.categories"
-              :id="createCategoryId('private', category.name)"
-              :key="`private-${category.id}`"
-              :title="category.name"
-              :items="category.items"
-              variant="private"
-              @focus-section="updateActiveSection"
-            />
-          </template>
         </template>
       </main>
     </div>
+  </div>
 
-    <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLoginModal">
-      <section class="login-modal">
-        <div class="modal-header">
-          <div>
-            <p class="panel-kicker">Sign In</p>
-            <h2>账号密码登录</h2>
-          </div>
-          <button class="modal-close" type="button" @click="closeLoginModal">关闭</button>
+  <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLoginModal">
+    <section class="login-modal">
+      <div class="modal-header">
+        <div>
+          <p class="section-kicker">Account Login</p>
+          <h2>登录后可查看私有导航</h2>
         </div>
-        <form class="login-form" @submit.prevent="login">
-          <label>
-            用户名
-            <input v-model="loginForm.username" autocomplete="username" required />
-          </label>
-          <label>
-            密码
-            <input v-model="loginForm.password" type="password" autocomplete="current-password" required />
-          </label>
-          <button type="submit" :disabled="authLoading">
-            {{ authLoading ? "登录中..." : "登录" }}
-          </button>
-        </form>
-      </section>
-    </div>
+        <button class="modal-close" type="button" @click="closeLoginModal">关闭</button>
+      </div>
+
+      <form class="login-form" @submit.prevent="login">
+        <label>
+          用户名
+          <input v-model="loginForm.username" autocomplete="username" required />
+        </label>
+        <label>
+          密码
+          <input v-model="loginForm.password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" :disabled="authLoading">
+          {{ authLoading ? "登录中..." : "登录" }}
+        </button>
+      </form>
+    </section>
   </div>
 </template>
