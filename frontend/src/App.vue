@@ -20,9 +20,10 @@ const itemSubmitting = ref(false);
 const errorMessage = ref("");
 const adminMessage = ref("");
 const sidebarOpen = ref(false);
-const activeSection = ref("public-overview");
+const activeSection = ref("filter-all");
 const showLoginModal = ref(false);
 const searchQuery = ref("");
+const selectedCategoryKey = ref("all");
 const currentPath = ref(window.location.pathname || HOME_PATH);
 const loginForm = ref({
   username: "admin",
@@ -53,11 +54,26 @@ const filteredPrivateCategories = computed(() => {
   return filterCategories(privateCategories.value, normalizedQuery.value);
 });
 
+const allVisibleCategories = computed(() => [
+  ...filteredPublicCategories.value.map((category) => ({ ...category, scope: "public" })),
+  ...filteredPrivateCategories.value.map((category) => ({ ...category, scope: "private" })),
+]);
+
 const hasVisibleResults = computed(() => {
   if (!normalizedQuery.value) {
-    return true;
+    return allVisibleCategories.value.length > 0;
   }
-  return filteredPublicCategories.value.length > 0 || filteredPrivateCategories.value.length > 0;
+  return allVisibleCategories.value.length > 0;
+});
+
+const displayedCategories = computed(() => {
+  if (selectedCategoryKey.value === "all") {
+    return allVisibleCategories.value;
+  }
+
+  const [scope, rawId] = selectedCategoryKey.value.split(":");
+  const targetId = Number(rawId);
+  return allVisibleCategories.value.filter((category) => category.scope === scope && category.id === targetId);
 });
 
 const sidebarGroups = computed(() => {
@@ -74,32 +90,18 @@ const sidebarGroups = computed(() => {
     ];
   }
 
-  const publicLinks = filteredPublicCategories.value.map((category) => ({
-    id: createCategoryId("public", category.name),
-    label: category.name,
-    meta: `${category.items.length} 个站点`,
-  }));
-
-  const privateLinks = filteredPrivateCategories.value.map((category) => ({
-    id: createCategoryId("private", category.name),
+  const categoryLinks = allVisibleCategories.value.map((category) => ({
+    id: `filter-${category.scope}:${category.id}`,
     label: category.name,
     meta: `${category.items.length} 个站点`,
   }));
 
   return [
     {
-      title: "公共分组",
-      links: [{ id: "public-overview", label: "公共导航", meta: "无需登录" }, ...publicLinks],
-    },
-    {
-      title: "私有分组",
+      title: "分类筛选",
       links: [
-        {
-          id: "private-overview",
-          label: "私有导航",
-          meta: isLoggedIn.value ? "已解锁" : "登录后可见",
-        },
-        ...privateLinks,
+        { id: "filter-all", label: "全部分类", meta: `${allVisibleCategories.value.length} 个分类` },
+        ...categoryLinks,
       ],
     },
   ];
@@ -157,7 +159,7 @@ function createCategoryId(scope, name) {
 function syncPath() {
   currentPath.value = window.location.pathname || HOME_PATH;
   sidebarOpen.value = false;
-  activeSection.value = isAdminRoute.value ? "admin-overview" : "public-overview";
+  activeSection.value = isAdminRoute.value ? "admin-overview" : `filter-${selectedCategoryKey.value}`;
 }
 
 function navigateTo(path) {
@@ -184,10 +186,21 @@ function scrollToSection(id) {
 }
 
 function handleSidebarNavigate(id) {
-  if (isAdminRoute.value && currentPath.value !== ADMIN_PATH) {
-    navigateTo(ADMIN_PATH);
+  if (isAdminRoute.value) {
+    if (currentPath.value !== ADMIN_PATH) {
+      navigateTo(ADMIN_PATH);
+    }
+    scrollToSection(id);
+    return;
   }
-  scrollToSection(id);
+
+  if (id === "filter-all") {
+    selectedCategoryKey.value = "all";
+  } else if (id.startsWith("filter-")) {
+    selectedCategoryKey.value = id.replace("filter-", "");
+  }
+  activeSection.value = `filter-${selectedCategoryKey.value}`;
+  sidebarOpen.value = false;
 }
 
 function openLoginModal() {
@@ -308,7 +321,8 @@ function logout() {
   if (isAdminRoute.value) {
     navigateTo(HOME_PATH);
   } else {
-    activeSection.value = "public-overview";
+    selectedCategoryKey.value = "all";
+    activeSection.value = "filter-all";
   }
 }
 
@@ -444,44 +458,26 @@ onUnmounted(() => {
       <p v-if="adminMessage" class="success-banner">{{ adminMessage }}</p>
 
       <main v-if="!isAdminRoute" class="main-layout">
-        <section
-          id="public-overview"
-          class="overview-card"
-          @mouseenter="updateActiveSection('public-overview')"
-        >
+        <section class="overview-card">
           <div>
-            <p class="section-kicker">Public Navigation</p>
-            <h2>公共导航</h2>
-            <p>保留分类浏览和卡片网格，支持顶部实时搜索。</p>
+            <p class="section-kicker">Navigation View</p>
+            <h2>分类筛选</h2>
+            <p>左侧选择分类后，右侧仅展示对应站点卡片；默认展示全部分类。</p>
           </div>
-          <span class="overview-badge">{{ filteredPublicCategories.length }} 个分类</span>
+          <span class="overview-badge">{{ displayedCategories.length }} / {{ allVisibleCategories.length }} 个分类</span>
         </section>
 
-        <section
-          v-if="isLoggedIn"
-          id="private-overview"
-          class="overview-card private-overview"
-          @mouseenter="updateActiveSection('private-overview')"
-        >
-          <div>
-            <p class="section-kicker">Private Navigation</p>
-            <h2>私有导航</h2>
-            <p>已登录后会一起参与搜索过滤，并在首页同样以卡片方式展示。</p>
-          </div>
-          <span class="overview-badge private-badge">{{ filteredPrivateCategories.length }} 个分类</span>
-        </section>
-
-        <section v-else id="private-overview" class="locked-panel" @mouseenter="updateActiveSection('private-overview')">
+        <section v-if="!isLoggedIn" class="locked-panel">
           <div class="locked-copy">
-            <h3>登录后解锁私有导航</h3>
-            <p>右上角按钮继续使用弹窗登录，成功后会关闭弹窗并刷新数据。</p>
+            <h3>当前为访客模式</h3>
+            <p>已展示全部公共分类，登录后可在左侧继续筛选私有分类。</p>
           </div>
           <button type="button" class="login-button" @click="openLoginModal">立即登录</button>
         </section>
 
         <div v-if="loading" class="empty-state">
           <h3>正在加载导航数据</h3>
-          <p class="loading-copy">请稍候，公共导航和私有导航会在同一视图中刷新。</p>
+          <p class="loading-copy">请稍候，分类与卡片会同步更新。</p>
         </div>
 
         <div v-else-if="!hasVisibleResults" class="empty-state">
@@ -489,24 +485,19 @@ onUnmounted(() => {
           <p>当前关键词会匹配分类名、导航标题和描述，试试更短的词或其他别名。</p>
         </div>
 
+        <div v-else-if="displayedCategories.length === 0" class="empty-state">
+          <h3>当前分类暂无可展示站点</h3>
+          <p>可切换到“全部分类”查看完整列表。</p>
+        </div>
+
         <template v-else>
           <ToolGridSection
-            v-for="category in filteredPublicCategories"
-            :id="createCategoryId('public', category.name)"
-            :key="`public-${category.id}`"
+            v-for="category in displayedCategories"
+            :id="`filter-${category.scope}:${category.id}`"
+            :key="`${category.scope}-${category.id}`"
             :title="category.name"
             :items="category.items"
-            variant="public"
-            @focus-section="updateActiveSection"
-          />
-
-          <ToolGridSection
-            v-for="category in filteredPrivateCategories"
-            :id="createCategoryId('private', category.name)"
-            :key="`private-${category.id}`"
-            :title="category.name"
-            :items="category.items"
-            variant="private"
+            :variant="category.scope"
             @focus-section="updateActiveSection"
           />
         </template>
