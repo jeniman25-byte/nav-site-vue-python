@@ -458,23 +458,6 @@ onUnmounted(() => {
       <p v-if="adminMessage" class="success-banner">{{ adminMessage }}</p>
 
       <main v-if="!isAdminRoute" class="main-layout">
-        <section class="overview-card">
-          <div>
-            <p class="section-kicker">Navigation View</p>
-            <h2>分类筛选</h2>
-            <p>左侧选择分类后，右侧仅展示对应站点卡片；默认展示全部分类。</p>
-          </div>
-          <span class="overview-badge">{{ displayedCategories.length }} / {{ allVisibleCategories.length }} 个分类</span>
-        </section>
-
-        <section v-if="!isLoggedIn" class="locked-panel">
-          <div class="locked-copy">
-            <h3>当前为访客模式</h3>
-            <p>已展示全部公共分类，登录后可在左侧继续筛选私有分类。</p>
-          </div>
-          <button type="button" class="login-button" @click="openLoginModal">立即登录</button>
-        </section>
-
         <div v-if="loading" class="empty-state">
           <h3>正在加载导航数据</h3>
           <p class="loading-copy">请稍候，分类与卡片会同步更新。</p>
